@@ -14,7 +14,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>PomoDock</string>
   <key>CFBundleExecutable</key><string>PomoDock</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.3</string>
+  <key>CFBundleShortVersionString</key><string>0.2.0</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
   <key>NSAppleEventsUsageDescription</key><string>PomoDock hides and shows apps when you switch modes.</string>
@@ -37,7 +37,7 @@ codesign --force -s - --requirements '=designated => identifier "local.workspace
 [[ "${1:-}" == "--no-install" ]] && exit 0
 
 pkill -x PomoDock 2>/dev/null || true
-pkill -x AntiDopamineDock 2>/dev/null || true   # the name before 0.1.3
+pkill -x AntiDopamineDock 2>/dev/null || true   # the name before 0.2.0
 pkill -x AntiDopamineBar 2>/dev/null || true   # the name before 0.1.2
 pkill -x WorkspaceBar 2>/dev/null || true      # the name before 0.0.1
 mkdir -p ~/Applications
