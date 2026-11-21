@@ -1,10 +1,11 @@
-// Anti-Dopamine Dock: a dock at the bottom of the screen with three modes. Each app belongs to one mode.
+// PomoDock: a dock at the bottom of the screen with three modes. Each app belongs to one mode.
 // Leaving a mode hides its apps; entering one brings back, all at once, its front app and the apps
 // that had a window in one of Rectangle's fields (a half, third, quarter or maximised), and leaves
 // the rest hidden until you ask for them (Cmd-Tab, or the mode's card on hover).
 // Cmd-Tab lists only the current mode's apps and the shared ones (switcher.swift), an add-in.
 // Hidden windows keep their frames, so a layout made with Rectangle survives the switch, and the
 // dock's app icons offer Rectangle's layouts on right-click (through its rectangle:// URL scheme).
+// Drag an app icon along the row to put it elsewhere in this mode's row, or onto a mode to move it.
 // It stands just above the screen's lower edge; drag it sideways, double-click to centre it, and
 // drag its right end to resize it. Windows of the front app are kept above it, and it steps aside
 // while the front app fills the screen (a full-screen space, a video, a game).
@@ -135,6 +136,7 @@ struct SavedState: Codable, Equatable {
     var gateTotal: Double?
     var gateReady: String?                // a gated mode whose wait ran out: the next click opens it
     var order: [String: [String]]?        // mode -> its apps in the order you put them; the card shows the first five
+    var rowOrder: [String: [String]]?     // mode -> its dock row's apps in the order you dragged them to
     var usage: [String: Use]?             // app -> how much it is used, fading by half every three days
     var sharedUsage: [String: [String: Use]]?  // mode -> shared app -> how much it is used in that mode
     var rectangleOwn: RectangleOwn?       // Rectangle's settings before the dock first set its gap
@@ -1206,7 +1208,29 @@ final class DockModel: ObservableObject {
             let o = owner(a.bundleIdentifier ?? "")
             return o == nil || o == state.current
         }.sorted { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }
-        return ordered.filter { seen.insert($0.bundleIdentifier ?? "").inserted } + mine
+        return rowOrdered(ordered.filter { seen.insert($0.bundleIdentifier ?? "").inserted } + mine)
+    }
+
+    /// The row in the order you dragged its icons to in this mode. An app not placed yet keeps its
+    /// place among the others like it, after the placed ones: a new app comes in at the end.
+    func rowOrdered(_ row: [NSRunningApplication]) -> [NSRunningApplication] {
+        guard let saved = state.rowOrder?[state.current], !saved.isEmpty else { return row }
+        let place = Dictionary(saved.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        let at = { (a: NSRunningApplication) in place[a.bundleIdentifier ?? ""] ?? Int.max }
+        return row.enumerated().sorted { (at($0.element), $0.offset) < (at($1.element), $1.offset) }.map(\.element)
+    }
+
+    /// Keep the row's new order for this mode. Apps not in the row now (moved, quit or hidden) keep
+    /// their place in the list, so one that comes back stands where it stood.
+    func saveRowOrder(_ pids: [pid_t]) {
+        var seen = Set<String>()
+        var next = pids.compactMap { pid in apps.first { $0.processIdentifier == pid }?.bundleIdentifier }
+            .filter { seen.insert($0).inserted }
+        var o = state.rowOrder ?? [:]
+        for (i, id) in (o[state.current] ?? []).enumerated() where !next.contains(id) { next.insert(id, at: min(i, next.count)) }
+        o[state.current] = next
+        state.rowOrder = o
+        writeJSON(stateURL, state)
     }
 
     var incoming: Set<String> = []   // apps a switch is bringing back, until it has settled
@@ -1851,9 +1875,15 @@ final class DockModel: ObservableObject {
         if save { state.scale = scale; writeJSON(stateURL, state) }
     }
 
-    // Dragging an app icon carries the app to another mode.
+    // Dragging an app icon along the row moves it there; dragging it onto a mode carries the app
+    // to that mode.
     @Published var draggedApp: NSRunningApplication?
     @Published var dropTarget: String?
+    /// The row while an icon is dragged along it: its icons in their order so far, and where the
+    /// drag began. The other icons make way as the dragged one passes them.
+    @Published var rowDrag: [pid_t]?
+    var rowDragStart: (pids: [pid_t], x: CGFloat)?
+    static let rowStride: CGFloat = 44   // an app icon (38) and the gap after it, at size 1
     var appFrames: [pid_t: CGRect] = [:]     // each app icon, in the dock's coordinates
     var movingDock = false
     var dragSeen = Date.distantPast           // the drag's last move
@@ -1865,16 +1895,39 @@ final class DockModel: ObservableObject {
     func modeTarget(at p: CGPoint, for app: NSRunningApplication) -> String? {
         guard let lo = modeFrames.values.map(\.minX).min(), let hi = modeFrames.values.map(\.maxX).max(),
               p.x > lo - 60 * scale, p.x < hi + 24 * scale, p.y > -150 * scale else { return nil }
+        let id = app.bundleIdentifier ?? ""
+        guard !isShared(id) else { return nil }   // a shared app moves only from its menu
         let nearest = modeFrames.min { abs($0.value.midX - p.x) < abs($1.value.midX - p.x) }?.key
-        return nearest == owner(app.bundleIdentifier ?? "") ? nil : nearest
+        return nearest == owner(id) ? nil : nearest
+    }
+
+    /// The dragged icon's place in the row: where it started, one place on for each icon's width
+    /// the mouse has gone sideways. Over a mode, or dragged up off the row (more than an icon's
+    /// height above it), the row stands as it was: a drag up and away is not a reorder.
+    func rowDragChanged(_ app: NSRunningApplication, to p: CGPoint) {
+        guard let start = rowDragStart, let from = start.pids.firstIndex(of: app.processIdentifier) else { return }
+        var pids = start.pids
+        let top = appFrames.values.map(\.minY).min() ?? 0
+        let onRow = dropTarget == nil && p.y > top - 40 * scale
+        let steps = onRow ? Int(((p.x - start.x) / (DockModel.rowStride * scale)).rounded()) : 0
+        let to = min(max(from + steps, 0), pids.count - 1)
+        pids.move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+        if pids != rowDrag { withAnimation(.easeOut(duration: 0.15)) { rowDrag = pids } }
+    }
+
+    /// The row as drawn: during a drag in its order so far, an app that came in meanwhile at the end.
+    var rowApps: [NSRunningApplication] {
+        guard let order = rowDrag else { return apps }
+        let at = { (a: NSRunningApplication) in order.firstIndex(of: a.processIdentifier) ?? Int.max }
+        return apps.enumerated().sorted { (at($0.element), $0.offset) < (at($1.element), $1.offset) }.map(\.element)
     }
 
     func dragChanged(start: CGPoint, at point: CGPoint) {
         if draggedApp == nil, dragStart == nil, resizing == nil, !movingDock,
            let pid = appFrames.first(where: { $0.value.contains(start) })?.key,
-           let app = NSRunningApplication(processIdentifier: pid),
-           !isShared(app.bundleIdentifier ?? "") {   // a shared app moves only from its menu
+           let app = NSRunningApplication(processIdentifier: pid) {
             draggedApp = app
+            rowDragStart = (apps.map(\.processIdentifier), start.x)
             closeCard()
             log("drag \(app.bundleIdentifier ?? "?")")
         }
@@ -1882,6 +1935,7 @@ final class DockModel: ObservableObject {
         if let app = draggedApp {
             let t = modeTarget(at: point, for: app)
             if t != dropTarget { dropTarget = t }
+            rowDragChanged(app, to: point)
             onAppDrag?(app.icon ?? NSImage())
             return
         }
@@ -1910,11 +1964,20 @@ final class DockModel: ObservableObject {
         movingDock = false
         if let app = draggedApp {
             let target = drop ? dropTarget : nil
+            let row = drop && target == nil ? rowDrag : nil
+            let moved = row != nil && row != rowDragStart?.pids
             draggedApp = nil
             dropTarget = nil
+            rowDragStart = nil
             onAppDrag?(nil)
             if let target, !app.isTerminated { moveApp(app, to: target) }
-            else { log("drag \(app.bundleIdentifier ?? "?"): \(drop ? "dropped on no other mode" : "lost, cancelled")") }
+            else if moved, let row {
+                saveRowOrder(row)
+                refresh()   // the row takes its saved order before the drag's order lets go of it
+                log("drag \(app.bundleIdentifier ?? "?"): row of \(state.current) now \(state.rowOrder?[state.current] ?? [])")
+            }
+            else { log("drag \(app.bundleIdentifier ?? "?"): \(drop ? "dropped where it was" : "lost, cancelled")") }
+            withAnimation(.easeOut(duration: 0.15)) { rowDrag = nil }
             return
         }
         if resizing != nil { resizing = nil; setScale(scale); return }
@@ -2004,7 +2067,7 @@ struct DockView: View {
             if !model.apps.isEmpty {
                 Rectangle().fill(Color.primary.opacity(0.2)).frame(width: 1, height: 30 * k)
                 HStack(spacing: 6 * k) {
-                    ForEach(model.apps, id: \.processIdentifier) { app in
+                    ForEach(model.rowApps, id: \.processIdentifier) { app in
                         AppIcon(app: app, model: model)
                     }
                 }
@@ -2062,7 +2125,7 @@ struct DockView: View {
                 Button("Large") { model.setScale(1.25) }
             }
             Divider()
-            Button("Quit Anti-Dopamine Dock") { NSApp.terminate(nil) }
+            Button("Quit PomoDock") { NSApp.terminate(nil) }
         }
     }
 }
@@ -2525,19 +2588,25 @@ struct AppIcon: View {
     var body: some View {
         let id = app.bundleIdentifier ?? ""
         Button { if !model.justDragged { model.bringUp(id, app) } } label: {
+            // Every icon in the row is a running app, so only the one in front has a dot, as on the
+            // macOS Dock, and it stands a little larger; a hovered one larger still.
+            let front = model.frontmost == id
             VStack(spacing: 3 * k) {
                 Image(nsImage: app.icon ?? NSImage())
                     .resizable().interpolation(.high)
                     .frame(width: 38 * k, height: 38 * k)
-                    .scaleEffect(hover ? 1.1 : 1, anchor: .bottom)
-                Circle().fill(Color.primary.opacity(model.frontmost == id ? 0.85 : 0.35))
+                    .scaleEffect(hover ? 1.16 : (front ? 1.12 : 1), anchor: .bottom)
+                Circle().fill(Color.primary.opacity(front ? 0.9 : 0))
                     .frame(width: 4 * k, height: 4 * k)
             }
             .contentShape(Rectangle())
             .animation(.easeOut(duration: 0.12), value: hover)
+            .animation(.easeOut(duration: 0.2), value: model.frontmost == id)
         }
         .buttonStyle(.plain)
-        .opacity(model.draggedApp?.processIdentifier == app.processIdentifier ? 0.3 : 1)
+        // The dragged icon follows the mouse in its own panel; in the row it leaves a gap, as on
+        // the macOS Dock, not a faded copy.
+        .opacity(model.draggedApp?.processIdentifier == app.processIdentifier ? 0 : 1)
         .background(GeometryReader { g in
             Color.clear
                 .onAppear { model.appFrames[app.processIdentifier] = g.frame(in: .named("dock")) }
@@ -2545,7 +2614,8 @@ struct AppIcon: View {
                 .onDisappear { model.appFrames[app.processIdentifier] = nil }
         })
         .onHover { hover = $0 }
-        .help("\(app.localizedName ?? id): drag onto a mode to move it there")
+        .help(model.isShared(id) ? "\(app.localizedName ?? id): drag along the row to reorder"
+              : "\(app.localizedName ?? id): drag along the row to reorder, or onto a mode to move it there")
         .contextMenu {
             if model.active(\.rectangle) {
                 Menu("Rectangle") {

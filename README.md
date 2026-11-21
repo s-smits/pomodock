@@ -1,6 +1,6 @@
-# Anti-Dopamine Dock
+# PomoDock
 
-![The Anti-Dopamine Dock in 30 seconds](docs/demo.gif)
+![PomoDock in 30 seconds](docs/demo.gif)
 
 <sub>[The same video as an MP4](docs/demo.mp4), sharper.</sub>
 
@@ -34,6 +34,10 @@ Build the app yourself rather than running a copy someone sends you.
 An app you open joins the mode you are in. Right-click an app's icon to move it to another mode, or
 to keep it in every mode. Browsers are in every mode from the start, and the browser extension
 (below) keeps social sites to Socials.
+
+**Your own order.** Drag an app's icon left or right along the dock to give it another place. Each
+mode keeps its own order, and an app new to the mode joins at the end. Drag an icon up onto a mode
+to move the app there.
 
 **Cards.** Hover over a mode to see its top five apps, and click one to open it there.
 

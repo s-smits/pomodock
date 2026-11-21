@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Anti-Dopamine Dock: Socials Only in Socials",
-  "version": "0.1.2",
-  "description": "Blocks social media and YouTube unless Anti-Dopamine Dock is in Socials.",
+  "name": "PomoDock: Socials Only in Socials",
+  "version": "0.1.3",
+  "description": "Blocks social media and YouTube unless PomoDock is in Socials.",
   "permissions": ["declarativeNetRequestWithHostAccess", "alarms", "webNavigation"],
   "host_permissions": ["<all_urls>"],
   "background": { "scripts": ["background.js"] },

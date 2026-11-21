@@ -73,6 +73,16 @@ The day:
       card says "Day complete", and the next click starts again at the first block.
 - [x] Idle on a new day: the plan starts at the first block and today's count at 0.
 
+## The dock row
+
+- [ ] Dragging an app icon right (or left) along the row moves it there, the other icons making
+      way; the order holds after a mode switch and back, and after a dock restart.
+- [ ] Each mode keeps its own order; a shared app can stand in a different place in each.
+- [ ] An app opened after reordering joins at the end of the row.
+- [ ] Dragging an icon up off the row puts the row back as it was; dropped there, nothing moves.
+- [ ] Dragging an icon onto a mode still moves the app there; a shared app's icon reorders only.
+- [ ] Dragging the dock from an empty spot still moves the dock; a click on an icon still opens it.
+
 ## Add-ins (each switched off, checked, switched on again)
 
 - [x] Cmd-Tab for this mode only: on, the dock's switcher with the mode's apps; off, macOS's own.
